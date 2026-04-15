@@ -49,6 +49,7 @@ Get comprehensive details about a specific JIRA issue, including subtasks and li
     "created": "2025-01-01T10:00:00.000+0000",
     "updated": "2025-01-15T15:30:00.000+0000",
     "fix_versions": ["Release 1.0", "Release 2.0"],
+    "labels": ["BETA6", "JC_Validation_Clear"],
     "comments": [
       {
         "author": "John Doe",
@@ -104,6 +105,123 @@ get_jira_issue_details(
     include_linked_issues=False
 )
 ```
+
+#### 3. `add_jira_comment`
+Add a comment to a JIRA issue.
+
+**Parameters:**
+- `issue_key` (str, required): JIRA issue key (e.g., "PROJECT-123")
+- `comment_body` (str, required): Comment text in JIRA wiki markup format
+
+**Note:** JIRA uses wiki markup, NOT markdown. See formatting rules in the docstring.
+
+#### 4. `edit_jira_comment`
+Edit an existing comment on a JIRA issue.
+
+**Parameters:**
+- `issue_key` (str, required): JIRA issue key
+- `comment_id` (str, required): The ID of the comment to edit
+- `comment_body` (str, required): New comment text in JIRA wiki markup format
+
+#### 5. `update_jira_issue`
+Update fields on a JIRA issue. Only fields that are explicitly provided will be updated.
+
+**Parameters:**
+- `issue_key` (str, required): JIRA issue key (e.g., "PROJECT-123")
+- `summary` (str, optional): New issue title/summary
+- `description` (str, optional): New description in JIRA wiki markup format
+- `priority` (str, optional): Priority name - "Highest", "High", "Medium", "Low", "Lowest"
+- `assignee` (str, optional): Username or account ID. Use empty string `""` to unassign
+- `labels` (list, optional): Array of label strings. **REPLACES** all existing labels
+  - Note: JIRA labels cannot contain spaces — use underscores (e.g., `"JC_Validation_Clear"`). JIRA's web UI displays underscores as spaces.
+- `fix_versions` (list, optional): Array of version names. **REPLACES** existing versions
+  - ⚠️ **WARNING:** Fix versions are typically managed by release managers
+- `team` (str, optional): Team name (uses configurable custom field ID)
+
+**Example:**
+```python
+# Update single field
+update_jira_issue("PROJECT-123", summary="New Title")
+
+# Update multiple fields
+update_jira_issue(
+    "PROJECT-123",
+    summary="Updated Title",
+    priority="High",
+    description="New description with *bold* text"
+)
+
+# Update labels (replaces all existing)
+update_jira_issue("PROJECT-123", labels=["bug", "urgent"])
+
+# Unassign issue
+update_jira_issue("PROJECT-123", assignee="")
+
+# Update team
+update_jira_issue("PROJECT-123", team="Platform Team")
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "message": "Updated PROJECT-123: summary, priority",
+  "updated_fields": ["summary", "priority"],
+  "issue": {
+    "key": "PROJECT-123",
+    "summary": "Updated Title",
+    ...
+  }
+}
+```
+
+#### 6. `rank_jira_issues`
+Rank (reorder) one or more JIRA issues relative to another issue using JIRA's Agile ranking API.
+
+**Parameters:**
+- `issue_keys` (list, required): List of issue keys to move (max 50)
+- `rank_before` (str, optional): Rank the issues BEFORE this issue key (higher priority)
+- `rank_after` (str, optional): Rank the issues AFTER this issue key (lower priority)
+
+**Note:** Specify exactly one of `rank_before` or `rank_after`.
+
+**Example:**
+```python
+# Move single issue to top of backlog (before first issue)
+rank_jira_issues(["PROJECT-10"], rank_before="PROJECT-1")
+
+# Move multiple issues after a specific issue
+rank_jira_issues(["PROJECT-5", "PROJECT-6", "PROJECT-7"], rank_after="PROJECT-2")
+```
+
+**Returns:**
+- `status: "success"` - All issues ranked successfully
+- `status: "partial"` - Some issues failed (includes `successes` and `failures` arrays)
+- `status: "error"` - Complete failure with error message
+
+**Permissions:** Requires "Schedule Issues" permission in JIRA.
+
+#### 7. `reorder_jira_issues`
+Convenience function to reorder multiple issues into a specific sequence by chaining rank operations.
+
+**Parameters:**
+- `issue_keys` (list, required): Issues in desired order (first = highest priority)
+- `after_issue` (str, optional): Reference issue to place all issues after
+
+**Example:**
+```python
+# Reorder issues in sequence (first issue becomes highest priority)
+reorder_jira_issues([
+    "PROJECT-100",  # First (highest priority)
+    "PROJECT-101",  # Second
+    "PROJECT-102",  # Third
+])
+
+# Place issues after a reference point
+reorder_jira_issues(["PROJECT-5", "PROJECT-6"], after_issue="PROJECT-1")
+```
+
+**Returns:** Success/error status with `operations_completed` count
 
 ### Key Enhancements
 
@@ -233,6 +351,31 @@ Claude uses:
 4. Provides comprehensive report
 ```
 
+#### 4. Safe Label Operations
+```
+User: "Add the 'reviewed' label to PROJECT-123 without removing existing labels"
+
+Claude uses:
+1. get_jira_issue_details("PROJECT-123") - read current labels
+2. Append new label: current_labels + ["reviewed"]
+3. update_jira_issue("PROJECT-123", labels=new_labels)
+
+This prevents accidentally wiping out existing labels like "BETA6" or "urgent"
+```
+
+#### 5. Backlog Reordering
+```
+User: "Reorder these issues so they're prioritized in this order: PROJECT-100, PROJECT-101, PROJECT-102"
+
+Claude uses: reorder_jira_issues([
+    "PROJECT-100",  # Highest priority
+    "PROJECT-101",  # Second
+    "PROJECT-102"   # Third
+])
+
+Result: Issues are ranked in sequence in the backlog
+```
+
 ## Architecture
 
 ### Component Overview
@@ -249,6 +392,11 @@ Claude uses:
 │  │  @mcp.tool()                              │  │
 │  │  - search_jira_issues()                   │  │
 │  │  - get_jira_issue_details()               │  │
+│  │  - add_jira_comment()                     │  │
+│  │  - edit_jira_comment()                    │  │
+│  │  - update_jira_issue()                    │  │
+│  │  - rank_jira_issues()                     │  │
+│  │  - reorder_jira_issues()                  │  │
 │  └───────────────────────────────────────────┘  │
 └─────────────────┬───────────────────────────────┘
                   │ HTTPS/Bearer Token
@@ -268,6 +416,10 @@ Claude uses:
 | `search_jira_issues` | `/rest/api/2/search` | GET | JQL-based issue search |
 | `get_issue_with_relations` | `/rest/api/2/issue/{key}?expand=subtasks,issuelinks` | GET | Single issue with relations |
 | `get_issue_comments` | `/rest/api/2/issue/{key}/comment` | GET | Issue comments |
+| `add_jira_comment` | `/rest/api/2/issue/{key}/comment` | POST | Add comment |
+| `edit_jira_comment` | `/rest/api/2/issue/{key}/comment/{id}` | PUT | Edit comment |
+| `update_jira_issue` | `/rest/api/2/issue/{key}` | PUT | Update issue fields |
+| `rank_jira_issues` | `/rest/agile/1.0/issue/rank` | PUT | Rank issues in backlog |
 
 ### Data Flow
 
@@ -306,12 +458,15 @@ python -m unittest test_jira_mcp_tool.py
 The test suite covers:
 - ✅ Fetching issues with subtasks
 - ✅ Fetching issues with linked issues
+- ✅ Fetching issues with labels
 - ✅ Handling issues with no relations
 - ✅ Optional parameter combinations
 - ✅ Error handling (404, API errors, exceptions)
 - ✅ Input validation
 - ✅ Missing authentication token
 - ✅ Backward compatibility
+- ✅ Issue ranking (single and bulk)
+- ✅ Batch reordering operations
 
 ### Manual Testing
 
@@ -438,11 +593,14 @@ Grant minimal required permissions:
 - Read issues
 - Browse projects
 - View comments
+- Edit issues (required for `update_jira_issue`)
+- Add comments (required for `add_jira_comment`)
 
 Avoid:
 - Admin permissions
-- Issue creation/modification (unless needed)
+- Issue creation (unless needed)
 - Project administration
+- Delete permissions
 
 ### Network Security
 - All API calls use HTTPS
@@ -484,7 +642,25 @@ This server includes no built-in rate limiting. For high-volume usage, consider 
 
 ## Changelog
 
-### Version 2.0 (Current)
+### Version 2.2 (Current)
+**Backlog Ranking & Labels Support**
+- ✨ Added `rank_jira_issues()` tool for ranking issues using JIRA's Agile API
+- ✨ Added `reorder_jira_issues()` convenience tool for batch reordering
+- ✨ Added `labels` field to `search_jira_issues()` and `get_jira_issue_details()` responses
+- 🎯 Enables safe "read → append → write" workflow for labels
+- ⚡ Bulk ranking supports up to 50 issues per call
+- ✅ 22 new unit tests for ranking and labels functionality
+
+### Version 2.1
+**Issue Editing Capability**
+- ✨ Added `update_jira_issue()` tool for updating issue fields
+- ✨ Added `get_jira_field_metadata()` helper for discovering custom field IDs
+- 🎛️ Supports: summary, description, priority, assignee, labels, fix_versions, team
+- ⚠️ Fix versions include warning about release management coordination
+- 📝 Only updates provided fields; omitted fields unchanged
+- ✅ 17 new unit tests for update functionality
+
+### Version 2.0
 **Enhanced get_jira_issue_details**
 - ✨ Added automatic subtask retrieval
 - ✨ Added automatic linked issues retrieval
