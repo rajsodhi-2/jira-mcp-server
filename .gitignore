@@ -6,6 +6,7 @@
 # Keysight-specific files (not for public release)
 jira_itq_server.py
 test_fix_versions.py
+test_team_update.local.py
 start_jira_itq_server.bat
 start_jira_server_old.bat
 
